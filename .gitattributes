@@ -1,0 +1,16 @@
+# 统一换行符，避免 Windows / Linux 差异导致整个文件被标记为修改
+* text=auto
+
+# Windows 批处理必须是 CRLF，否则 cmd 解析可能出错
+*.bat text eol=crlf
+
+# 源码和文档统一 LF
+*.py  text eol=lf
+*.c   text eol=lf
+*.h   text eol=lf
+*.md  text eol=lf
+*.txt text eol=lf
+
+# 二进制文件不做换行转换
+*.exe binary
+*.png binary
