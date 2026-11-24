@@ -1,13 +1,7 @@
-# 本项目依赖（评分会看依赖管理是否规范）
-#
-# 安装：  pip install -r requirements.txt
-# 国内网络慢就加镜像：
+# 运行依赖
+# 安装：pip install -r requirements.txt
+# 国内网络慢可加镜像：
 #   pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
-requests>=2.31.0        # main.py 调 DeepSeek 大模型 API
-matplotlib>=3.8.0       # ui.py 画消费分类饼图
-
-# 说明：
-# 1) 不配置 API Key 也能跑（main.py 会自动降级成本地规则解析），
-#    但装了 requests 才能用大模型，所以它是必装项。
-# 2) matplotlib 只有"查看消费饼图"这个功能用到，没装也不影响记账和查账。
+requests>=2.31,<3          # 调用大模型 API，必需
+matplotlib>=3.8,<4         # 生成消费分类饼图，可选
