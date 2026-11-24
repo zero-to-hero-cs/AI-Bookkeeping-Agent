@@ -386,7 +386,9 @@ def set_budget():
 
     print_ok("预算设置成功：%.2f 元" % value)
 
-    # 顺便显示当前花费
+    # 先把查询条件刷成"本月总账"，否则会沿用上一次查询留下的 query.txt
+    ask_main("这个月一共花了多少")
+
     ok, _ = run_calc()
     if ok and RESULT_TXT.exists():
         warning, total, _categories = parse_result(RESULT_TXT.read_text(encoding="utf-8", errors="replace"))
