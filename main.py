@@ -498,12 +498,22 @@ def parse_multi(text):
     parts = split_clauses(text)
     if len(parts) < 2:
         return None
+
     records = []
+    current_day = None
     for part in parts:
+        parsed_day = _parse_date_text(part)
+        if parsed_day is not None:
+            current_day = parsed_day          # 这一段说了日期，后面没说的沿用它
+
         amount = guess_amount_money(part)
         category = guess_category(part)
         if amount is not None and category is not None:
-            records.append({"amount": amount, "category": category})
+            records.append({
+                "amount": amount,
+                "category": category,
+                "date": current_day.isoformat() if current_day else "",
+            })
     return records if len(records) >= 2 else None
 
 
@@ -794,15 +804,16 @@ def _run_flow():
 
     if action == "records":
         items = result.get("items") or []
-        day = to_date_str(user_text)
+        fallback_day = to_date_str(user_text)
         saved = []
         for item in items:
             amount = normalize_amount(item.get("amount"))
             if amount is None:
                 continue
             category = normalize_category(item.get("category"))
+            day = item.get("date") or fallback_day
             append_record(day, category, amount)
-            saved.append((category, amount))
+            saved.append((category, amount, day))
 
         if not saved:
             write_reply("这几笔我都没看懂，换种说法试试？", KIND_ERROR)
@@ -810,8 +821,13 @@ def _run_flow():
             return 1
 
         clear_pending()
-        detail = "；".join("%s %.2f 元" % (c, a) for c, a in saved)
-        msg = "记账成功 %d 笔：%s（%s）" % (len(saved), detail, day)
+        days = set(d for _c, _a, d in saved)
+        if len(days) == 1:
+            detail = "；".join("%s %.2f 元" % (c, a) for c, a, _d in saved)
+            msg = "记账成功 %d 笔：%s（%s）" % (len(saved), detail, days.pop())
+        else:
+            detail = "；".join("%s %.2f 元（%s）" % (c, a, d) for c, a, d in saved)
+            msg = "记账成功 %d 笔：%s" % (len(saved), detail)
         write_reply(msg, KIND_OK)
         print("[main] " + msg)
         return 0
