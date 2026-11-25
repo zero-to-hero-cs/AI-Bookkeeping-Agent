@@ -50,7 +50,13 @@ COLORS = ["#FF9999", "#66B2FF", "#99FF99", "#FFCC99", "#C2C2F0"]
 # 判断一句话是不是在查账，用来给用户补全说法
 QUERY_HINTS = ("多少", "一共", "总共", "合计", "统计", "汇总", "查")
 
-MISSING_CALC_HINT = "没有找到 calc.exe。请先编译：gcc calc.c -o calc.exe"
+MISSING_CALC_HINT = (
+    "没有找到 calc.exe（查账汇总需要它）。三种解决办法：\n"
+    "      · 装了 MinGW/gcc：gcc calc.c -o calc.exe -Wall -O2\n"
+    "      · 装了 Visual Studio：在「开发者命令提示符」里执行  cl /utf-8 /O2 calc.c\n"
+    "      · 用 Docker：镜像构建时会自动编译，直接  docker run -it --rm jizhang\n"
+    "    （记账、追问、预算、饼图不需要它，可以照常用）"
+)
 
 
 # ----------------------------------------------------------------------
@@ -256,6 +262,17 @@ def show_result(keyword="ALL"):
     line()
     print(bold(title))
     line()
+
+    # 一条记录都没有时，告诉用户怎么造数据，别让人以为程序坏了
+    if not categories:
+        print_warn("这段时间没有任何记录（总支出 0 元）")
+        print("    可以这样做：")
+        print("      1) 选 1 自己记一笔，比如输入「打车32」")
+        print("      2) 或者先灌一份示例数据，看到统计效果：")
+        print("         copy examples\\示例账本.txt data\\data.txt")
+        line()
+        return
+
     print("  总支出：%s 元" % (total or "0"))
     if categories:
         shown = [item for item in categories if keyword == "ALL" or item[0] == keyword]
@@ -608,6 +625,7 @@ def main():
     if not read_config().get("api_key"):
         print(yellow("提示：还没配置 API Key，现在是离线模式（选 5 可以设置，不配也能正常记账）。"))
 
+    first_run = True
     while True:
         print()
         line()
@@ -620,6 +638,14 @@ def main():
         print("  5. 设置 API Key")
         print("  6. 退出")
         line()
+
+        # 只在第一次显示用法示例，免得每轮都刷屏
+        if first_run:
+            print("  可以这样说：")
+            print("    记账 → 打车32 ／ 昨天午饭吃了28 ／ 买菜二十五")
+            print("    查账 → 这个月一共花了多少 ／ 上个月交通花了多少")
+            line()
+            first_run = False
 
         try:
             choice = input("请选择功能 > ").strip()
