@@ -1,0 +1,32 @@
+# 不打进镜像的内容（体积 + 隐私）
+.git/
+.github/
+
+# 本地运行时数据（每个人的账本不同）
+data/*
+
+# 本地编译产物（镜像里会重新编译）
+*.exe
+*.o
+*.obj
+
+# 密钥！绝对不能打进镜像
+config.txt
+.env
+.env.*
+
+# Python 缓存与虚拟环境
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 编辑器与系统垃圾
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# 打包文件与图片产物
+*.zip
+*.png
