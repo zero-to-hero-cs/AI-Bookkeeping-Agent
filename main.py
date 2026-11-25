@@ -351,9 +351,9 @@ CATEGORY_RULES = [
               "机票", "加油", "停车", "油费", "单车", "路费"]),
     ("餐饮", ["餐饮", "吃饭", "早饭", "午饭", "晚饭", "夜宵", "外卖", "咖啡",
               "奶茶", "聚餐", "食堂", "火锅", "烧烤", "买菜", "水果", "零食",
-              "中午", "早餐", "吃"]),
+              "中午", "早餐", "吃", "苹果", "香蕉", "橘子", "葡萄", "西瓜"]),
     ("娱乐", ["娱乐", "电影", "游戏", "演唱会", "门票", "旅游", "唱歌", "KTV",
-              "健身", "剧本杀", "展览"]),
+              "健身", "剧本杀", "展览", "游泳", "打球", "爬山", "健身房"]),
     ("购物", ["购物", "买", "淘宝", "京东", "拼多多", "衣服", "鞋", "数码",
               "耳机", "手机", "电脑", "超市", "日用品"]),
     ("其他", ["其他", "话费", "水电", "电费", "水费", "燃气", "宽带", "房租",
@@ -481,6 +481,50 @@ def guess_amount(text, loose=False):
     return None
 
 
+# 用来把"吃饭30，游泳195"这种句子拆成几段
+CLAUSE_SPLIT_RE = re.compile(r"[，,、；;。\n]+|还有|另外|以及")
+
+
+def split_clauses(text):
+    """把一句话按标点拆成若干小段"""
+    return [p.strip() for p in CLAUSE_SPLIT_RE.split(str(text or "")) if p and p.strip()]
+
+
+def parse_multi(text):
+    """
+    一句话里有多笔消费时，拆成多条记录。
+    只认"既有金额又有类别"的段，凑够 2 笔才返回，否则返回 None（走单笔流程）。
+    """
+    parts = split_clauses(text)
+    if len(parts) < 2:
+        return None
+    records = []
+    for part in parts:
+        amount = guess_amount_money(part)
+        category = guess_category(part)
+        if amount is not None and category is not None:
+            records.append({"amount": amount, "category": category})
+    return records if len(records) >= 2 else None
+
+
+def guess_amount_money(text):
+    """
+    自由语句里的金额：先走严格规则，再允许中文数字，
+    但只认带"十/百/千/万"的（"二十五""三十""一百二"），
+    排除"三个""两杯"这种数量词，避免把数量当金额。
+    """
+    amount = guess_amount(text)
+    if amount is not None:
+        return amount
+    for match in re.finditer(r"[%s]+" % CN_CHARS, text):
+        token = match.group(0)
+        if any(unit in token for unit in "十百千万"):
+            value = cn_to_number(token)
+            if value:
+                return normalize_amount(value)
+    return None
+
+
 def is_query(text):
     """是否在查账"""
     return any(w in text for w in QUERY_WORDS)
@@ -522,7 +566,7 @@ def local_parse(text, pending=None):
         return {"action": "ask", "draft": draft,
                 "message": "还差%s，能补充一下吗？" % missing}
 
-    amount = guess_amount(text)
+    amount = guess_amount_money(text)
     category = guess_category(text)
 
     # 2. 无关话题，直接拒绝
@@ -715,8 +759,15 @@ def _run_flow():
         print("[main] " + msg)
         return 0
 
-    # 2. 解析意图
-    result = chat_with_ai(user_text, pending)
+    # 2. 先看这一句里是不是有多笔消费（"吃饭30，游泳195"）
+    multi = None
+    if not pending:
+        multi = parse_multi(user_text)
+
+    if multi:
+        result = {"action": "records", "items": multi}
+    else:
+        result = chat_with_ai(user_text, pending)
     if not isinstance(result, dict):
         result = local_parse(user_text, pending)
     action = result.get("action")
@@ -737,6 +788,30 @@ def _run_flow():
         append_record(day, category, amount)
         clear_pending()
         msg = "记账成功：%s %.2f 元（%s）" % (category, amount, day)
+        write_reply(msg, KIND_OK)
+        print("[main] " + msg)
+        return 0
+
+    if action == "records":
+        items = result.get("items") or []
+        day = to_date_str(user_text)
+        saved = []
+        for item in items:
+            amount = normalize_amount(item.get("amount"))
+            if amount is None:
+                continue
+            category = normalize_category(item.get("category"))
+            append_record(day, category, amount)
+            saved.append((category, amount))
+
+        if not saved:
+            write_reply("这几笔我都没看懂，换种说法试试？", KIND_ERROR)
+            print("[main] 多笔解析失败")
+            return 1
+
+        clear_pending()
+        detail = "；".join("%s %.2f 元" % (c, a) for c, a in saved)
+        msg = "记账成功 %d 笔：%s（%s）" % (len(saved), detail, day)
         write_reply(msg, KIND_OK)
         print("[main] " + msg)
         return 0
