@@ -11,6 +11,7 @@ ui.py —— 终端交互、预算设置与饼图
 
 运行：python ui.py
 """
+import math
 import os
 import re
 import subprocess
@@ -134,6 +135,10 @@ def run_calc():
     if not CALC_EXE.exists():
         return False, MISSING_CALC_HINT
     try:
+        RESULT_TXT.unlink()          # 先删旧的，calc.exe 没产出时不会误读上一次结果
+    except OSError:
+        pass
+    try:
         proc = subprocess.run(
             [str(CALC_EXE)],              # 用完整路径，避免调起系统的计算器
             cwd=str(BASE_DIR),
@@ -228,9 +233,29 @@ def parse_result(text):
     return warning, total, categories
 
 
+def in_current_month():
+    """这次查询的区间是不是"本月"（预算按月，只能跟本月比）"""
+    if not QUERY_TXT.exists():
+        return True
+    try:
+        lines = QUERY_TXT.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+    except OSError:
+        return True
+    if len(lines) < 3:
+        return True
+    start = lines[1].strip()
+    today = date.today()
+    return start[:7] == today.strftime("%Y-%m")
+
+
 def read_budget():
     """读预算金额，没有则返回 None"""
-    text = BUDGET_TXT.read_text(encoding="utf-8", errors="replace").strip() if BUDGET_TXT.exists() else ""
+    if not BUDGET_TXT.exists():
+        return None
+    try:
+        text = BUDGET_TXT.read_text(encoding="utf-8-sig", errors="replace").strip()
+    except OSError:
+        return None
     try:
         value = float(text)
         return value if value > 0 else None
@@ -276,13 +301,24 @@ def show_result(keyword="ALL"):
     print("  总支出：%s 元" % (total or "0"))
     if categories:
         shown = [item for item in categories if keyword == "ALL" or item[0] == keyword]
+        if not shown:
+            # 查某个分类但那个分类没记录，不能把别的分类列出来
+            line()
+            print_warn("这段时间没有「%s」的记录" % keyword)
+            line()
+            return
         print()
-        for name, amount in (shown or categories):
+        for name, amount in shown:
             print("    %-4s %10s 元" % (name, amount))
     line()
 
-    # 预算对比
+    # 预算对比：预算按月设置，只有查的是本月才比较
     budget = read_budget()
+    if not in_current_month():
+        if budget:
+            print(yellow("  （预算是按月设置的，本次查询区间跨月，不做预算比较）"))
+        line()
+        return
     if warning:
         print(red(bold("  [!!] 警告：这个统计区间已超出预算！")))
         if budget:
@@ -428,7 +464,7 @@ def read_data():
     if not DATA_TXT.exists():
         return expenses
     try:
-        content = DATA_TXT.read_text(encoding="utf-8", errors="replace")
+        content = DATA_TXT.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return expenses
 
@@ -444,9 +480,13 @@ def read_data():
         else:
             continue
         try:
-            expenses.append((day, category, float(amount_text)))
+            value = float(amount_text)
         except ValueError:
             continue
+        # nan / inf 会让后续求和、画图全崩，直接跳过
+        if not math.isfinite(value) or value <= 0:
+            continue
+        expenses.append((day, category, value))
     return expenses
 
 
