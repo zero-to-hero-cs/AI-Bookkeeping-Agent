@@ -9,6 +9,7 @@ main.py —— AI 核心与意图识别
 配置 Key：$env:DEEPSEEK_API_KEY="sk-xxx"（不配则用本地规则解析）
 """
 import json
+import math
 import os
 import re
 import sys
@@ -93,9 +94,9 @@ def ensure_data_dir():
 
 
 def read_text(path):
-    """读文本文件，不存在返回空串"""
+    """读文本文件，不存在返回空串（utf-8-sig 自动吃掉 BOM）"""
     try:
-        return path.read_text(encoding="utf-8").strip()
+        return path.read_text(encoding="utf-8-sig").strip()
     except (FileNotFoundError, OSError):
         return ""
 
@@ -298,6 +299,14 @@ def to_time_range(text):
         last = end if end < today else today
         return start.isoformat(), last.isoformat(), "%s月" % m3.group(1)
 
+    if "下个月" in text or "下月" in text:
+        sy, sm = _shift_month(y, m, 1)
+        start, end = _month_range(sy, sm)
+        return start.isoformat(), end.isoformat(), "下个月"
+
+    if "前年" in text:
+        return date(y - 2, 1, 1).isoformat(), date(y - 2, 12, 31).isoformat(), "前年"
+
     # 默认本月 1 号到今天
     return date(y, m, 1).isoformat(), today.isoformat(), "本月"
 
@@ -314,8 +323,8 @@ def normalize_amount(raw):
     except (TypeError, ValueError):
         return None
     value = round(value, 2)
-    # 舍入之后再判断，避免 0.001 这种被记成 0.00
-    if value <= 0 or value > 10_000_000:
+    # nan / inf 必须挡掉：它们和任何数比较都是 False，能绕过下面两个判断
+    if not math.isfinite(value) or value <= 0 or value > 10_000_000:
         return None
     return value
 
@@ -334,6 +343,10 @@ def normalize_category(raw):
 # ======================================================================
 # 数字必须整体匹配（\d+ 而不是 \d{1,2}），否则 "12.999元" 会被截成 999
 NUM_RE = re.compile(r"\d+(?:\.\d+)?")
+# 匹配金额时必须带货币单位，用来区分"时间里的数字"和"钱"
+MONEY_UNIT_RE = re.compile(r"(?:元|块|块钱|毛|角|¥)")
+# 科学计数法（1e999）当非法输入，别从里面抠出 999
+SCI_RE = re.compile(r"\d\s*[eE]\s*[+-]?\d")
 AMOUNT_UNIT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:元|块|块钱|¥)")
 
 # 中文数字：十块、二十五、一百二、两百五
@@ -362,6 +375,7 @@ CATEGORY_RULES = [
 
 QUERY_WORDS = ["多少", "花了多少", "一共", "总共", "合计", "统计", "汇总",
                "查", "账单", "支出", "花销"]
+INCOME_WORDS = ["工资", "到账", "收入", "退款", "报销", "退款到", "收到", "进账"]
 REFUSE_WORDS = ["借钱", "贷款", "借我", "算命", "写代码", "帮我写", "天气",
                 "新闻", "讲个笑话", "聊天", "你是谁", "股票", "基金"]
 
@@ -429,6 +443,13 @@ def guess_amount(text, loose=False):
     loose=True 时额外接受光杆中文数字（"二十五"），只在追问金额时用，
     避免"买了五个苹果"里的"五"被当成金额。
     """
+    text = str(text or "")
+    # 负数（退款/报销）本项目不支持，直接当认不出
+    if re.search(r"-\s*\d", text):
+        return None
+    # "1e999" 这类科学计数法直接拒绝，不然会被截出 999
+    if SCI_RE.search(text):
+        return None
     # 1) "10块5"、"一块五" —— 角
     m = YUAN_JIAO_RE.search(text)
     if m:
@@ -545,9 +566,42 @@ def is_refuse(text):
     return any(w in text for w in REFUSE_WORDS)
 
 
+CANCEL_WORDS = ["算了", "取消", "不用了", "不记了", "别记了", "不要了", "算了算了"]
+
+
+def is_cancel(text):
+    """是否是在取消这一轮记账（允许带语气词，如"算了，不记了"）"""
+    plain = re.sub(r"[\s，,。.!！~、]+", "", str(text or ""))
+    return len(plain) <= 10 and any(w in plain for w in CANCEL_WORDS)
+
+
+def is_income(text):
+    """是否是收入/退款（本项目只记支出，不能静默当成支出）"""
+    return any(w in text for w in INCOME_WORDS)
+
+
+
+def looks_like_answer(text):
+    """短句 / 纯数字 / 就是一个分类词，才算"在回答上一轮追问" """
+    plain = re.sub(r"[\s，,。.!！~、]+", "", str(text or ""))
+    if not plain or len(plain) > 8:
+        return False
+    if re.fullmatch(r"[\d.]+", plain):
+        return True
+    if plain in CATEGORIES:
+        return True
+    if guess_amount(plain, loose=True) is not None:
+        return True
+    return guess_category(plain) is not None
+
 
 def local_parse(text, pending=None):
     """不用大模型的解析，返回 action 字典"""
+
+    # 用户换了话题（不像在回答追问），丢掉上一轮的 pending
+    if pending and not looks_like_answer(text):
+        clear_pending()
+        pending = None
 
     # 1. 在回答上一轮的追问
     if pending:
@@ -582,6 +636,15 @@ def local_parse(text, pending=None):
     # 2. 无关话题，直接拒绝
     if is_refuse(text):
         return {"action": "refuse", "message": "抱歉，我只负责记账和查账哦。"}
+
+    # 2.5 收入 / 退款：不能静默当成支出
+    if is_income(text):
+        return {"action": "refuse",
+                "message": "我现在只记支出，收入/退款暂时不记。可以记成「其他」类别。"}
+
+    # 2.6 查账句里没有货币单位的数字，是日期/天数，不是金额
+    if is_query(text) and not MONEY_UNIT_RE.search(text):
+        amount = None
 
     # 3. 查账（没有金额、有查询词）
     if amount is None and is_query(text):
@@ -745,7 +808,13 @@ def run():
         print("[main] 另一个 main.py 正在处理，本次跳过")
         return 1
     try:
-        return _run_flow()
+        try:
+            return _run_flow()
+        except Exception as exc:               # noqa: BLE001
+            # 兜底：任何意外都要给 UI 一个答复，不能静默退出
+            write_reply("程序内部出错了：%s" % exc, KIND_ERROR)
+            print("[main] 未捕获异常：%s" % exc)
+            return 1
     finally:
         release_lock()
 
@@ -761,7 +830,7 @@ def _run_flow():
 
     pending = load_pending()
 
-    if user_text in ("算了", "取消", "不用了"):
+    if is_cancel(user_text):
         was_waiting = bool(pending)
         clear_pending()
         msg = "好的，这次不记了。" if was_waiting else "好，有需要再叫我。"
