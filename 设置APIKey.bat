@@ -31,6 +31,6 @@ if not defined PY (
     exit /b 1
 )
 
-%PY% -c "import ui; ui.set_api_key()"
+"%PY%" -c "import ui; ui.set_api_key()"
 echo.
 pause

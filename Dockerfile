@@ -39,5 +39,9 @@ RUN gcc calc.c -o calc.exe -Wall -O2 && chmod +x calc.exe
 # 保证数据目录存在（data/ 下的运行数据不进镜像）
 RUN mkdir -p data
 
+# 账本放数据卷里，docker run --rm 之后账本不会丢
+# 用法：docker run -it --rm -v "%cd%/data:/app/data" jizhang
+VOLUME ["/app/data"]
+
 # 以终端菜单方式启动；必须用 docker run -it 才有交互
 CMD ["python", "-u", "ui.py"]

@@ -35,6 +35,6 @@ if not exist "calc.exe" (
     echo.
 )
 
-%PY% ui.py
+"%PY%" ui.py
 echo.
 pause

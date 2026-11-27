@@ -155,7 +155,9 @@ def _run_cases():
     data = read(DATA_DIR / "data.txt")
     check("记账：TYPE=ok", reply.startswith("TYPE=ok"), reply[:60])
     check("记账：写进账本且分类金额正确", "交通,32.00" in data, data)
-    check("记账：日期用的是昨天", "2026-" in data and not data.startswith("TYPE"), data)
+    from datetime import date, timedelta
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    check("记账：日期用的是昨天", yesterday in data, data)
 
     # 2. 查账
     reply, _out, _err = run_main("上个月交通花了多少", env)
