@@ -34,7 +34,17 @@
 /* 去掉行尾的 \r \n 和空格 */
 static void trim_eol(char *s)
 {
-    size_t n = strlen(s);
+    size_t n;
+
+    /* 用记事本/PowerShell 保存过的文件可能带 BOM（EF BB BF），
+       不跳过会把第一行整行当成脏数据丢掉 */
+    if ((unsigned char)s[0] == 0xEF &&
+        (unsigned char)s[1] == 0xBB &&
+        (unsigned char)s[2] == 0xBF) {
+        memmove(s, s + 3, strlen(s + 3) + 1);
+    }
+
+    n = strlen(s);
     while (n > 0 && (s[n - 1] == '\n' || s[n - 1] == '\r' ||
                      s[n - 1] == ' ' || s[n - 1] == '\t')) {
         s[n - 1] = '\0';
